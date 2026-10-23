@@ -1,0 +1,7 @@
+*
+!keys/rust.gpg
+!licenses
+!package.yml
+!runtime-deps.ubuntu
+!scripts/cargo-licenses.py
+!scripts/rust-toolchain.sh
