@@ -1,0 +1,185 @@
+name: resvg
+title: resvg
+summary: Renders SVG files to PNG with resvg, and simplifies SVG files and converts their text to paths with usvg.
+homepage: https://github.com/linebender/resvg
+# resvg and usvg are Apache-2.0 OR MIT, and so are most of the crates compiled
+# into them; the label takes MIT wherever a crate offers it. arrayref is
+# BSD-2-Clause, tiny-skia and tiny-skia-path are BSD-3-Clause and slotmap is
+# Zlib. The build stops when a crate linked into resvg or usvg has a license
+# that this label does not cover (the build reads this line).
+# The Rust standard library and the crates it uses are linked in too: MIT or a
+# choice that includes it, with compiler-builtins also under Apache-2.0 WITH
+# LLVM-exception and the Unicode data tables in core under Unicode-3.0.
+# cargo-auditable records the bytemuck_derive proc macro and the crates it
+# uses as runtime dependencies, since it takes a proc macro crate with test
+# targets for a library. They are not in the binaries, but the build checks
+# them as linked crates; unicode-ident among them is also under Unicode-3.0.
+license: MIT AND BSD-2-Clause AND BSD-3-Clause AND Zlib AND Unicode-3.0 AND Apache-2.0 WITH LLVM-exception
+upstream:
+  source: github-release
+  repository: linebender/resvg
+  # 0.45.0 was tagged without the v. With v? such a tag is read, then refused
+  # because git.tag does not give it, and listed in the tracking issue instead
+  # of being skipped without notice.
+  tag-pattern: '^v?(\d+\.\d+\.\d+)$'
+  version-template: '{1}'
+  versioning: semver
+  version: 0.48.1
+  # The release tag is built with its Cargo.lock, and cargo checks every crate
+  # it downloads against the checksum there.
+  git:
+    url: https://github.com/linebender/resvg.git
+    tag: v{version}
+    commit: 68b14c4c3bccdb60344c777406486b54c36ec1a4
+  extra-artifacts:
+    # The Rust release manifest, signed with the Rust release key. The build
+    # installs rustc, cargo, rust-std and rust-src from the archives it lists,
+    # each checked against the SHA-256 the manifest gives. The reconciler moves
+    # version and sha256 to each new stable release once it is 7 days old.
+    rust-toolchain:
+      version: 1.99.1
+      url: https://static.rust-lang.org/dist/channel-rust-{version}.toml
+      checksums: {url: 'https://static.rust-lang.org/dist/channel-rust-{version}.toml.sha256', algorithm: sha256}
+      signature: https://static.rust-lang.org/dist/channel-rust-{version}.toml.asc
+      sha256: fb152be80975c194aa5fc684b2aec3a6e14e2b855efe2faa4e5f8ae6e590f463
+      track:
+        source: html-index
+        url: https://static.rust-lang.org/dist/channel-rust-stable.toml
+        pattern: '^url = "https://static\.rust-lang\.org/dist/(?P<date>\d{4}-\d{2}-\d{2})/rustc-(?P<version>\d+\.\d+\.\d+)-x86_64-unknown-linux-gnu\.tar\.gz"$'
+        versioning: semver
+        cooldown: 7d
+        skip: []
+    # Built from its crate and used only in the build stage. It stores the
+    # list of crates in the resvg and usvg binaries, where SBOM tools and image
+    # scanners read it. Update version and sha256 together, with the checksum
+    # from the crates.io index.
+    cargo-auditable:
+      version: 0.7.7
+      url: https://static.crates.io/crates/cargo-auditable/cargo-auditable-{version}.crate
+      sha256: ccdd489bc94d1338cd04389a842e00661300331ec915fb376b4810ef7d480b5d
+image:
+  entrypoint: [resvg]
+  cmd: [--help]
+test:
+  - |
+    resvg --version > version.txt
+    usvg --version >> version.txt
+    printf '%s\n%s\n' "$VERSION" "$VERSION" > want.txt
+    cmp want.txt version.txt || { echo "expected $VERSION from resvg and usvg, got:" >&2; cat version.txt >&2; exit 1; }
+  - |
+    # resvg and usvg are linked against the C library of the image they were
+    # built in, and their .dep-v0 sections list the crates they were built
+    # from. GNU ld puts the build ID right before the loader's path and tr may
+    # keep its last byte, so the path is matched anywhere in a word.
+    for bin in resvg usvg; do
+      head -c 4096 "/usr/local/bin/$bin" | LC_ALL=C tr -c 'A-Za-z0-9_./-' '\n' | grep -oE '/lib(64)?/ld-[A-Za-z0-9_.-]+' > loader.txt \
+        || { echo "$bin names no dynamic loader" >&2; exit 1; }
+      loader=$(head -n 1 loader.txt)
+      test -e "$loader" || { echo "$bin needs $loader, which is not in the image" >&2; exit 1; }
+      LC_ALL=C grep -Fq .dep-v0 "/usr/local/bin/$bin" || { echo "$bin has no .dep-v0 section" >&2; exit 1; }
+    done
+  - |
+    # size FILE WIDTH HEIGHT: FILE is a PNG of that size (IHDR, in hex).
+    size() {
+      got=$(od -An -tx1 -N24 "$1" | tr -d ' \n')
+      want=89504e470d0a1a0a0000000d49484452$(printf '%08x%08x' "$2" "$3")
+      test "$got" = "$want" || { echo "$1: expected a $2x$3 PNG ($want), got $got" >&2; exit 1; }
+    }
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">' \
+      '<rect id="r" x="5" y="5" width="10" height="5" fill="red"/></svg>' > rect.svg
+    resvg rect.svg rect.png
+    size rect.png 20 10
+    resvg -w 200 rect.svg wide.png
+    size wide.png 200 100
+    resvg --export-id r rect.svg part.png
+    size part.png 10 5
+    resvg --query-all rect.svg > query.txt
+    test "$(cat query.txt)" = 'r,5,5,10,5' || { echo "expected r,5,5,10,5, got: $(cat query.txt)" >&2; exit 1; }
+    # The same shape as a path, the file compressed as SVGZ, and the file
+    # read from stdin and written to stdout give the same pixels.
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">' \
+      '<path d="M5 5h10v5H5z" fill="red"/></svg>' > path.svg
+    resvg path.svg path.png
+    cmp rect.png path.png || { echo "rect.svg and path.svg render differently" >&2; exit 1; }
+    gzip -c rect.svg > rect.svgz
+    resvg rect.svgz svgz.png
+    cmp rect.png svgz.png || { echo "rect.svgz renders differently from rect.svg" >&2; exit 1; }
+    resvg --resources-dir . - -c < rect.svg > stdout.png
+    cmp rect.png stdout.png || { echo "rect.svg renders differently from stdin to stdout" >&2; exit 1; }
+    printf 'not svg\n' > bad.svg
+    if resvg bad.svg bad.png 2> bad.err; then echo "resvg accepted bad.svg" >&2; exit 1; fi
+    test -s bad.err || { echo "resvg printed no error for bad.svg" >&2; exit 1; }
+  - |
+    # The DejaVu fonts are found through /etc/fonts. resvg maps the generic
+    # families to Microsoft fonts, which the image does not have, so text
+    # needs the DejaVu names.
+    resvg --list-fonts > fonts.txt
+    grep -F "'DejaVu Sans (English, United States)'" fonts.txt | grep ', Normal, 400, Normal$' | head -n 1 > sans.txt
+    test -s sans.txt || { echo "resvg --list-fonts lists no regular DejaVu Sans:" >&2; cat fonts.txt >&2; exit 1; }
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50">' \
+      '<text id="t" x="10" y="35" font-family="sans-serif" font-size="30">Hello</text></svg>' > text.svg
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50"/>' > blank.svg
+    resvg blank.svg blank.png
+    # quiet SVG PNG ARGS...: SVG is drawn into PNG with ARGS, without warnings.
+    quiet() {
+      svg=$1 png=$2
+      shift 2
+      resvg "$@" "$svg" "$png" 2> "$png.err"
+      if [ -s "$png.err" ]; then echo "resvg $* $svg printed:" >&2; cat "$png.err" >&2; exit 1; fi
+      if cmp -s blank.png "$png"; then echo "resvg $* $svg drew no text" >&2; exit 1; fi
+    }
+    resvg text.svg default.png 2> default.err
+    grep -Fq "No match for 'sans-serif' font-family." default.err \
+      || { echo "expected a warning about sans-serif, got:" >&2; cat default.err >&2; exit 1; }
+    cmp -s blank.png default.png || { echo "text without a matching font was drawn" >&2; exit 1; }
+    quiet text.svg sans.png --sans-serif-family 'DejaVu Sans'
+    resvg --sans-serif-family 'DejaVu Sans' --query-all text.svg > query.txt
+    awk -F, '$1 == "t" && $4 > 50 && $5 > 10 { ok = 1 } END { exit !ok }' query.txt \
+      || { echo "expected a text box wider than 50, got:" >&2; cat query.txt >&2; exit 1; }
+    # A family that no font has falls back to the serif family.
+    sed 's/sans-serif/Helvetica/' text.svg > helvetica.svg
+    quiet helvetica.svg serif.png --serif-family 'DejaVu Serif'
+    # Fonts from a directory, without the system fonts.
+    mkdir fonts
+    cp "$(sed 's/: .*//' sans.txt)" fonts/
+    quiet text.svg dir.png --skip-system-fonts --use-fonts-dir fonts --sans-serif-family 'DejaVu Sans'
+    cmp sans.png dir.png || { echo "the font in fonts/ renders differently from the same system font" >&2; exit 1; }
+  - |
+    # usvg writes a simplified SVG file, with shapes and text as paths.
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="50">' \
+      '<rect x="5" y="5" width="10" height="5" fill="red"/>' \
+      '<text x="20" y="35" font-family="sans-serif" font-size="30">Hello</text></svg>' > in.svg
+    usvg --sans-serif-family 'DejaVu Sans' in.svg out.svg 2> usvg.err
+    if [ -s usvg.err ]; then cat usvg.err >&2; exit 1; fi
+    grep -q '<path' out.svg || { echo "usvg wrote no paths:" >&2; cat out.svg >&2; exit 1; }
+    if grep -Eq '<(rect|text)' out.svg; then echo "usvg left a rect or text element:" >&2; cat out.svg >&2; exit 1; fi
+    usvg --sans-serif-family 'DejaVu Sans' --preserve-text in.svg kept.svg
+    grep -q '<text' kept.svg || { echo "usvg --preserve-text dropped the text:" >&2; cat kept.svg >&2; exit 1; }
+    usvg --sans-serif-family 'DejaVu Sans' - -c < in.svg > stdout.svg
+    cmp out.svg stdout.svg || { echo "usvg wrote another file from stdin to stdout" >&2; exit 1; }
+  - |
+    # Raster images in data URLs: a PNG made by resvg and a 1x1 red GIF.
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10">' \
+      '<rect width="20" height="10" fill="blue"/></svg>' > blue.svg
+    resvg blue.svg blue.png
+    printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"/>' > blank.svg
+    resvg blank.svg blank.png
+    # embed TYPE BASE64: an SVG file with that image is drawn without warnings.
+    embed() {
+      printf '%s\n' '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="20" height="10">' \
+        "<image width=\"20\" height=\"10\" preserveAspectRatio=\"none\" xlink:href=\"data:image/$1;base64,$2\"/></svg>" > "$1.svg"
+      resvg "$1.svg" "$1-image.png" 2> "$1.err"
+      if [ -s "$1.err" ]; then echo "resvg $1.svg printed:" >&2; cat "$1.err" >&2; exit 1; fi
+      if cmp -s blank.png "$1-image.png"; then echo "the $1 image was not drawn" >&2; exit 1; fi
+    }
+    embed png "$(base64 < blue.png | tr -d '\n')"
+    embed gif R0lGODlhAQABAIAAAP8AAAAAACwAAAAAAQABAAACAkQBADs=
+examples:
+  - title: Render an SVG file as a PNG 1200 pixels wide
+    command: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/randomcontainers/resvg -w 1200 logo.svg logo.png
+  - title: Render text with the DejaVu fonts in the image
+    command: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" ghcr.io/randomcontainers/resvg --serif-family 'DejaVu Serif' --sans-serif-family 'DejaVu Sans' --monospace-family 'DejaVu Sans Mono' card.svg card.png
+  - title: Convert the text in an SVG file to paths with usvg
+    command: docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" --entrypoint usvg ghcr.io/randomcontainers/resvg --sans-serif-family 'DejaVu Sans' in.svg out.svg
+  - title: Render from stdin to stdout
+    command: docker run --rm -i ghcr.io/randomcontainers/resvg - -c < drawing.svg > drawing.png
