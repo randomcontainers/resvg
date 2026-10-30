@@ -159,7 +159,7 @@ Rust comes from static.rust-lang.org. The release manifest named in `package.yml
 
 The project checks the releases of [linebender/resvg](https://github.com/linebender/resvg/releases) every 15 minutes. A release is picked up once it is 24 hours old. The new version and the commit of its tag are then committed to `package.yml` and the images are rebuilt. Only the newest release is built; tags of older versions stay as they were last built.
 
-The Rust release that builds resvg follows Rust's stable channel. Each new stable release is committed to `package.yml` once it is 7 days old, and the images are rebuilt with it. cargo-auditable is pinned by hand. A release waits for a person when it is tagged without the `v`, as 0.45.0 was, when it fails upstream's tests on one of the platforms, when it adds a crate under a license that the image's label does not cover or a crate without a license file, when it moves siphasher to another version (see [Licenses](#licenses)), or when it adds a `.cargo/config.toml`.
+The Rust release that builds resvg follows Rust's stable channel. Each new stable release is committed to `package.yml` once it is a day old, and the images are rebuilt with it. cargo-auditable is pinned by hand. A release waits for a person when it is tagged without the `v`, as 0.45.0 was, when it fails upstream's tests on one of the platforms, when it adds a crate under a license that the image's label does not cover or a crate without a license file, when it moves siphasher to another version (see [Licenses](#licenses)), or when it adds a `.cargo/config.toml`.
 
 The images of the current version are also rebuilt when the Ubuntu or Alpine base image changes and at least every 7 days, so distro security fixes reach the current tags.
 
